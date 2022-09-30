@@ -1,0 +1,1 @@
+This folder is reserved for backup of various pihole configuration for storage or parsing

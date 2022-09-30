@@ -1,0 +1,1 @@
+This folder is reserved for backup of various dnsmasq configuration for storage or parsing
