@@ -1,5 +1,13 @@
 # PiHole-HA
 
+## What is this?
+This script is designed to be run on a secondary instance of PiHole via regular
+(via Crontab) and sync configuration from a primary. On detection of primary 
+failure, this script activates DHCP with last known leases and reservations.
+
+It also has notification functionality built in via Telegram and IFTTT and
+(should) send notifications on failure and restore of primary PiHole instance
+
 ## Standing on the shoulders of Giants.
 
 This script is built on and inspired by the following work
