@@ -26,6 +26,7 @@ to expand....
 1) implement application checks against API web interface instead of admin interface
  /admin/api.php?status
     * bad state --> {"status":"disabled","FTLnotrunning":true}
+    * disabled state --> {"status":"disabled"}
     * good state --> {"status":"enabled"}
     * use JQ?
     *    https://stedolan.github.io/jq/tutorial/
