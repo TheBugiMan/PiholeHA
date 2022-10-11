@@ -18,3 +18,6 @@ User running the script requires passwordless sudo access due to changing files 
 
 ## Pihole
 Installation process will depend on platform. See http://pi-hole.net
+
+## Gravity Sync (optional)
+https://github.com/vmstan/gravity-sync

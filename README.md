@@ -16,10 +16,7 @@ This script is built on and inspired by the following work
 
 ## Installation
 
-to expand....
-* Gravity Sync (link)
-* Copy/install script
-* Crontab steps
+See INSTALL.md
 
 ## ToDo / Enhancements
 
