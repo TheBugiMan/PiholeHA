@@ -61,6 +61,7 @@ function partneractivetest {
 
 # different methods of sending notification
 function sendnotification {
+    echo ""
     echo "Sending notification..."
     if [ "$ifttt_enable" == "true" ] ; then sendnotification_ifttt ; fi
     if [ "$telegram_enable" == "true" ]  ; then sendnotification_telegram ; fi
@@ -87,6 +88,21 @@ function flag_dhcpoff {
     echo "...Done!"
 }
 
+# Enable DHCP on local PiHole instance
+function dhcp_enable {
+    echo ""
+    echo "Enable DHCP on local PiHole instance..."
+    $pihole_app -a enabledhcp $piholedhcpparam
+    echo "...Done!"   
+}
+# Disable DHCP on local PiHole instance
+function dhcp_disable {
+    echo ""
+    echo "Disabling DHCP on local PiHole instance..."
+    $pihole_app -a disabledhcp
+    echo "...Done!"   
+}
+
 # copy DNSmasq configuration from backup location to live configuration
 function dhcp_copyconf {
     #cp ${dir}/dnsmasq/02-pihole-dhcp.conf /etc/dnsmasq.d/ # don't believe this is required?
@@ -100,40 +116,22 @@ function dhcp_copyconf {
 
 # import DNSmasq configuration from partner PiHole instance
 function dhcp_backupconf {
-    #rsync -ai ${syncuser}@${target}:/etc/dnsmasq.d/* ${dir}/dnsmasq/ #anything dnsmasq seems to be covered by GravitySync now
-    #rsync -ai ${syncuser}@${target}:/etc/pihole/* ${dir}/pihole  #FTL DB too big to sync this way, plus already managed through GravitySync
+    # copy dnsmasq config, primarily for DHCP scope information for activating on local instance when required
+    rsync -ai ${syncuser}@${target}:/etc/dnsmasq.d/* ${dir}/dnsmasq/
+    #FTL DB too big to sync this way, plus already managed through GravitySync
+    #rsync -ai ${syncuser}@${target}:/etc/pihole/* ${dir}/pihole  
     
     # sync active DHCP leases, wrapped to detect any file changes
     # this may be removed in future depending on outcomes of testing
     RSYNC_COMMAND=$(rsync -ai ${syncuser}@${target}:/etc/pihole/dhcp.leases ${dir}/pihole)
 
-    if [ $? -eq 0 ]; then
-        # Success do some more work!
-
-        if [ -n "${RSYNC_COMMAND}" ]; then
-            # Stuff to run, because rsync has changes
-
-            # @@ set flag to refresh DNSmasq with SIGHUP or restart FTL?
-        else
-            # No changes were made by rsync
-        fi
+    if [ -n "${RSYNC_COMMAND}" ]
+    then
+        # Stuff to run, because rsync has changes
+        if [ ! -z "$piholeha_debug" ] ; then echo "Changes in dnsmasq files detected and synced" ; fi
+        # @@ set flag to refresh DNSmasq with SIGHUP or restart FTL?
     else
-        # Something went wrong!
-        exit 1
+        # No changes were made by rsync
+        if [ ! -z "$piholeha_debug" ] ; then echo "No changes in dnsmasq files" ; fi
     fi
-}
-
-# Enable DHCP on local PiHole instance
-function piholedhcp_enable {
-    echo ""
-    echo "Enable DHCP on local PiHole instance..."
-    $pihole_app -a enabledhcp $piholedhcpparam
-    echo "...Done!"   
-}
-# Disable DHCP on local PiHole instance
-function piholedhcp_disable {
-    echo ""
-    echo "Disabling DHCP on local PiHole instance..."
-    $pihole_app -a disabledhcp
-    echo "...Done!"   
 }
