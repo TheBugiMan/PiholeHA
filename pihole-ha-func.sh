@@ -74,6 +74,7 @@ function sendnotification_ifttt {
     curl -s --retry 5 https://maker.ifttt.com/trigger/pihole_ha/with/key/$ifttt_token?state=$notificationmessage
 }
 
+# create file to flag DHCP has been activated
 function flag_dhcpon {
     echo ""
     echo "Generating lock file for DHCP state"
@@ -81,6 +82,7 @@ function flag_dhcpon {
     echo "...Done!"
 }
 
+# remove file to flag DHCP has been deactivated
 function flag_dhcpoff {
     echo ""
     echo "Clearing lock file..."
@@ -122,16 +124,24 @@ function dhcp_backupconf {
     #rsync -ai ${syncuser}@${target}:/etc/pihole/* ${dir}/pihole  
     
     # sync active DHCP leases, wrapped to detect any file changes
-    # this may be removed in future depending on outcomes of testing
     RSYNC_COMMAND=$(rsync -ai ${syncuser}@${target}:/etc/pihole/dhcp.leases ${dir}/pihole)
 
     if [ -n "${RSYNC_COMMAND}" ]
     then
-        # Stuff to run, because rsync has changes
+        # rsync has changes
         if [ ! -z "$piholeha_debug" ] ; then echo "Changes in dnsmasq files detected and synced" ; fi
-        # @@ set flag to refresh DNSmasq with SIGHUP or restart FTL?
+        # possibly in future set flag to refresh DNSmasq with SIGHUP or restart FTL?
+        #   would be required to try and resolve current DHCP leases on other pi, rely on GravitySync and client database?
     else
         # No changes were made by rsync
         if [ ! -z "$piholeha_debug" ] ; then echo "No changes in dnsmasq files" ; fi
     fi
+}
+
+# This parses configuration from DNSMASQ to compile values required to enable DHCP on pihole CLI
+#    currently unimplemented/incomplete
+function dhcp_parseconf {
+    $dhcpdomain_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep domain=)
+    $dhcprouter_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep option:router)
+    $dhcpscope_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep dhcp-range=)
 }
