@@ -3,7 +3,7 @@
 
 # help menu
 function helpoptions {
-    echo "PiHole HA support script"
+    echo "Pi-hole HA support script"
     echo ""
     echo "This script is built to mirror DHCP configuration from a active PiHole instance and copy to a holding location on standby instance."
     echo "In the event that the primary instance in unavailable, it will activate the configuration it has duplciated to maintain leases."
@@ -29,15 +29,6 @@ function exit_success {
     exit 0
 }
 
-# run selftest (this is on the Pi-hole instance that will take over in case the main one is offline/in error state)
-#  updates
-#     - %selfprobe1%
-#     - %selfcheck1%
-function selftest {
-    selfprobe1=$(curl -s http://127.0.0.1/admin/api.php?status | grep "enabled")
-    selfcheck1=$(echo $selfprobe1)
-}
-
 # count the pings to partner
 #  updates
 #     - %count% with number of successful pings
@@ -48,15 +39,69 @@ function partnerping {
     count=$( ping -c ${countping} -w 3 $target | grep time= | wc -l )
 }
 
-# check for partner active state - Active
+# function to call Pi-hole API on a device and determine state
+#  updates
+#     - %checkvalue% for nul value compare on failure
+#  relies on
+#     - %testtarget% to do API call against
+function pihole_apitest {
+    # explicitly clear to ensure 'clean' testing env
+    checkvalue=
+    checkstate=
+
+    # pulls api status for parsing many times
+    checkprobe_raw=$(curl -s http://${testtarget}/admin/api.php?status)
+    if [ ! -z "$piholeha_debug" ] ; then echo "${checkprobe_raw}" ; fi
+
+    # check to see if blocking is enabled or disabled
+    checkprobe_status=$(jq -r '.status' <<< "$checkprobe_raw")
+    case $checkprobe_status in
+        enabled)
+            if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} status enabled" ; fi 
+            checkstate="enabled";;
+        disabled)
+            if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} status disabled" ; fi 
+            checkstate="disabled";;
+        *)
+            if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} status unknown - ${checkprobe_status}" ; fi ;;
+    esac
+
+    # check FTL status
+    partnerprobe_ftl=$(jq -r '.FTLnotrunning' <<< $partnerprobe_raw)
+    case $checkprobe_ftl in
+        true)
+            if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} FTL not functioning" ; fi 
+            # some example calls I have seen it disabled as FTL not running. This is to catch those cases though seems deprecated API response now
+            if [ "$checkstate" == "disabled" ] ; then checkstate= ; fi 
+            ;;
+        *)
+            if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} FTL running ${partnerprobe_ftl}" ; fi ;;
+    esac
+
+    # sanatised version for checking. zero length indicates failure
+    checkvalue=$(echo $checkstate)
+}
+
+# run selftest (this is on the Pi-hole instance that will take over in case the main one is offline/in error state)
+#  updates
+#     - %selfcheck% sanitised for nul compare
+function selftest {
+    #selfprobe1=$(curl -s http://127.0.0.1/admin/api.php?status | grep "enabled")
+    testtarget=127.0.0.1
+    pihole_apitest
+    selfcheck=$(echo $checkvalue)
+}
+
+# check for partner active state
 #  relies on
 #     - %target% as target device to poll
 #  updates
-#     - %partnerprobe1% raw data after grep
-#     - %partnercheck1% sanitised for nul compare
+#     - %partnercheck% sanitised for nul compare
 function partneractivetest {
-    partnerprobe1=$(curl -s http://${target}/admin/api.php?status | grep "enabled")
-    partnercheck1=$(echo $partnerprobe1)
+    #partnercheckstate=$(curl -s http://${target}/admin/api.php?status | grep "status":"enabled")
+    testtarget=$target
+    pihole_apitest
+    partnercheck=$(echo $checkvalue)
 }
 
 # different methods of sending notification
@@ -71,7 +116,7 @@ function sendnotification_telegram {
     curl -s --retry 5 --data "text=$notificationmessage" --data "chat_id=$telegram_groupid" 'https://api.telegram.org/bot'$telegram_key'/sendMessage'
 }
 function sendnotification_ifttt {
-    curl -s --retry 5 https://maker.ifttt.com/trigger/pihole_ha/with/key/$ifttt_token?state=$notificationmessage
+    curl -s --retry 5 https://maker.ifttt.com/trigger/$ifttt_trigger/with/key/$ifttt_token?state=$notificationmessage
 }
 
 # create file to flag DHCP has been activated
@@ -101,14 +146,14 @@ function dhcp_enable {
 
     # enable DHCP on local standby instance 
     echo ""
-    echo "Enable DHCP on local PiHole instance..."
+    echo "Enable DHCP on local Pi-hole instance..."
     $pihole_app -a enabledhcp $piholedhcpparam
     echo "...Done!"
 }
 # Disable DHCP on local PiHole instance
 function dhcp_disable {
     echo ""
-    echo "Disabling DHCP on local PiHole instance..."
+    echo "Disabling DHCP on local Pi-hole instance..."
     $pihole_app -a disabledhcp
     echo "...Done!"   
 }
@@ -179,7 +224,7 @@ function dhcp_parseconf {
     # debug output
     if [ ! -z "$piholeha_debug" ]
     then
-        echo "Configuration parsed from primary PiHole instance backup"
+        echo "Configuration parsed from primary Pi-hole instance backup"
         echo "DCHP Domain: $dhcpdomain"
         echo "Default Gateway: $dhcprouter"
         echo "DHCP Scope Min: $dhcpscope_min"
@@ -188,4 +233,42 @@ function dhcp_parseconf {
         echo "PiHole DHCP config string: ${piholedhcpparam}"
         echo ""
     fi
+}
+
+# if configuration file doesn't exist, create a template for users
+function BuildDefaultConfig {
+    cat << EOF > $configfile
+#!/bin/bash
+# This file contains all the configuraiton that is best kept away from prying eyes
+
+# delete or change this line once you have configured the settings. The script will not run otherwise
+sampleconfig=true
+
+# target IP or DNS of 'primary' Pi-hole, & friendly name of monitored Pi-hole
+target=CHANGEME.local
+targetname=PiHole
+
+# how many pings to test against target (3 should be sufficent)
+countping=3
+
+# User to connect to target Pi-hole as. Same requirements as Gravity-Sync requirement so same user is ideal.
+#  - SSH key authentication to be used
+#  - Configured as paswordless sudo
+syncuser=pi
+
+# HealthCheck.io Integration
+#   URI/UUID to enable, blank disables
+healthcheckuri=https://hc-ping.com/CHANGEME
+
+# User notifications
+# -----
+# Telegram
+telegram_enable=false
+telegram_key=CHANGEME:CHANGEME
+telegram_groupid=CHANGEME
+# IFTTT
+ifttt_enable=false
+ifttt_trigger=CHANGEME
+ifttt_token=CHANGEME    
+EOF
 }
