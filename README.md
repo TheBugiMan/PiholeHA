@@ -36,3 +36,4 @@ partner/primary Pi-hole server.
 3) Options to add/remove/adjust crontab
 4) Check response back from push notification to see if successful
     * Telegram JSON response includes "ok":true or "ok":false
+5) Automate addition of two DNS servers on primary pi-hole instance

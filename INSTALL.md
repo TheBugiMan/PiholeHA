@@ -33,7 +33,20 @@ App used to scrape API data for Pi-hole. Almost certainly pre-installed but list
 ## Installation
 
 ## Pihole
+
+### The App
 Installation process will depend on platform. See http://pi-hole.net
+
+### HA DNS
+if you want the DNS to hit both servers (which is the assumption since you are aiming for HA DHCP), on the 
+primary instance of Pi-hole, you will need to add the IP address of the secondary pi-hole server. Alternative 
+option is to have very short DHCP lease times however that is additional load and complexity on servers.
+
+This round-robin DNS can be achieved by adding additional file (e.g. `03-pihole-dhcp-DNS.conf`) under 
+`/etc/dnsmasq.d/` similar to the following (where 192.168.0.2 and 192.168.0.3 are your two pihole servers);
+```
+dhcp-option=6, 192.168.0.2, 192.168.0.3
+```
 
 ## Gravity Sync (optional)
 https://github.com/vmstan/gravity-sync
