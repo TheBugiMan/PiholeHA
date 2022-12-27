@@ -92,10 +92,18 @@ function flag_dhcpoff {
 
 # Enable DHCP on local PiHole instance
 function dhcp_enable {
+    # copy last backup of leases to this instance
+    if [ ! -z "$piholeha_debug" ] ; then echo "Copying config/leases to active instance" ; fi
+    dhcp_copyconf
+    
+    # build DHCP options from backup
+    dhcp_parseconf
+
+    # enable DHCP on local standby instance 
     echo ""
     echo "Enable DHCP on local PiHole instance..."
     $pihole_app -a enabledhcp $piholedhcpparam
-    echo "...Done!"   
+    echo "...Done!"
 }
 # Disable DHCP on local PiHole instance
 function dhcp_disable {
@@ -141,7 +149,43 @@ function dhcp_backupconf {
 # This parses configuration from DNSMASQ to compile values required to enable DHCP on pihole CLI
 #    currently unimplemented/incomplete
 function dhcp_parseconf {
-    $dhcpdomain_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep domain=)
-    $dhcprouter_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep option:router)
-    $dhcpscope_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep dhcp-range=)
+    # read line from dnsmasq from file for the domain name
+    dhcpdomain_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep domain=)
+    # break it into an array with '=' delimiter
+    IFS="=" read -a dhcpdomain_array <<< $dhcpdomain_raw
+    # take second value (0 indexed) which is the value we want
+    dhcpdomain=${dhcpdomain_array[1]}
+
+    # read line from dnsmasq from file for the default gateway (router)
+    dhcprouter_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep option:router)
+    # break it into an array with '=' delimiter
+    IFS="," read -a dhcprouter_array <<< $dhcprouter_raw
+    # take second value (0 indexed) which is the value we want
+    dhcprouter=${dhcprouter_array[1]}
+
+    # read line from dnsmasq from file for the DHCP scope
+    dhcpscope_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep dhcp-range=)
+    # break it into an array with '=' delimiter, this gives us the options
+    IFS="=" read -a dhcpscope_array1 <<< $dhcpscope_raw
+    # break it into another array with ',' delimiter, this gives us the min, max and lifetime
+    IFS="," read -a dhcpscope_array2 <<< ${dhcpscope_array1[1]}
+    # pull the wanted values
+    dhcpscope_min=${dhcpscope_array2[0]}
+    dhcpscope_max=${dhcpscope_array2[1]}
+
+    # build parameter to pass to PiHole to activate DHCP
+    piholedhcpparam="'${dhcpscope_min}' '${dhcpscope_max}' '${dhcprouter}' '${dhcp_lifetime}' '${dhcpdomain}'"
+
+    # debug output
+    if [ ! -z "$piholeha_debug" ]
+    then
+        echo "Configuration parsed from primary PiHole instance backup"
+        echo "DCHP Domain: $dhcpdomain"
+        echo "Default Gateway: $dhcprouter"
+        echo "DHCP Scope Min: $dhcpscope_min"
+        echo "DHCP Scope Max: $dhcpscope_max"
+        echo ""
+        echo "PiHole DHCP config string: ${piholedhcpparam}"
+        echo ""
+    fi
 }
