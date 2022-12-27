@@ -1,8 +1,3 @@
-to expand....
-* Gravity Sync (link)
-* Copy/install script
-* Crontab steps
-
 ## Requirements
 
 ### PiHole
@@ -11,8 +6,15 @@ This set up requires (despite the obviousness) two instances of PiHole running o
 ### GravitySync
 While not technically a requirement for the script to work, does enable two PiHole instances to sync relevent data between them
 
-### Passwordless sudo
-User running the script requires passwordless sudo access due to changing files in DNSmasq etc directory
+### Remote login user
+User running the script requires passwordless sudo access and key authentication on the remote/primary device. This is used for pulling files in DNSmasq etc directory to local copy for backup.
+If you are already using Gravity Sync, the user created for that has the same requirements and so can be used here as well
+
+### jq
+jq (json query shell app) while becoming more common to be installed 'by default' may not be in all instances. This little app is used to parse the Pi-hole API results to determine application state
+
+### curl
+App used to scrape API data for Pi-hole. Almost certainly pre-installed but listed here for completness.
 
 ## Installation
 
@@ -21,3 +23,34 @@ Installation process will depend on platform. See http://pi-hole.net
 
 ## Gravity Sync (optional)
 https://github.com/vmstan/gravity-sync
+
+## This script
+This is a bit rough and ready but
+
+### Copy files
+Copy _all_ script files to a directory. This includes configuration and function includes.
+NB: The script does cater for missing configuration file and when detected will create a new one and warn the user.
+
+### Schedule script to run on regular interval
+Eventually will be looking to integrate this into a 'install' script or automated process within the script/app itself but for time being it is a manual process.
+
+Example crontab entry would be
+```
+*/5 * * * * /home/pihole-gs/pihole-ha.sh >> /home/pihole-gs/pihole-ha.log 2>&1
+```
+Note that this example includes sending output to a log. Again an improvement item is to have this contained within the app. At the moment additional `logrotated` configuration is then required to support this.
+
+Example for e.g. `/etc/logrotate.d/pihole-ha`
+```
+/home/pihole-gs/pihole-ha.log {
+	rotate 7
+	daily
+	compress
+	delaycompress
+	notifempty
+	extension log
+	dateext
+	su pihole-gs pihole-gs
+	create 0664 pihole-gs sudo
+}
+```
