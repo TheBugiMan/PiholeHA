@@ -1,0 +1,12 @@
+[Unit]
+Description=PiHole HA for DHCP through monitoring
+After=network-online.target
+Wants=pihole-ha.timer
+
+[Service]
+Type=simple
+User=unknown
+ExecStart=
+
+[Install]
+WantedBy=multi-user.target

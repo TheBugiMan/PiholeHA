@@ -1,0 +1,15 @@
+[Unit]
+Description=PiHole HA for DHCP through monitoring
+RefuseManualStart=no
+RefuseManualStop=no
+#Requires=gravity-sync.service
+
+[Timer]
+Unit=pihole-ha.service
+Persistent=true
+OnBootSec=120
+OnUnitInactiveSec=5m
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target
