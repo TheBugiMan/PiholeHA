@@ -9,25 +9,35 @@ function helpoptions {
     echo "In the event that the primary instance in unavailable, it will activate the configuration it has duplciated to maintain leases."
     echo "DHCP configuration is statically configure in script. DNS/Blackhole synchronisation is maintained by GravitySync."
     echo ""
+    echo "  $0 [options]"
+    echo ""
+    echo " --debug       provide debug output"
+    echo ""
     exit 0
 }
+
 
 # manage script end
 #  relies on
 #     - %healthcheckuri%
 function exit_success {
     # phone home to healthcheck.io to confirm successful run if configured
-    if [ -n "$healthcheckuri" ] ; then
-        echo ""
-        echo Polling Healthcheck to confirm run...
-        curl -s -m 10 --retry 5 $healthcheckuri
-        echo ""
-        echo "===================================="
+    if [ "$ifttt_enable" == "true" ] ; then
+        if [ -n "$healthcheckuri" ] ; then
+            echo ""
+            echo Polling Healthcheck to confirm run...
+            curl -s -m 10 --retry 5 $healthcheckuri
+            echo ""
+            echo "===================================="
+        else
+            echo Healthcheck polling enabled but no URI! Please update config.
+        fi
     fi
 
     # goodbye
     exit 0
 }
+
 
 # count the pings to partner
 #  updates
@@ -36,8 +46,9 @@ function exit_success {
 #     - %countping% for number of pings
 #     - %target% as target device to ping
 function partnerping {
-    count=$( ping -c ${countping} -w 3 $target | grep time= | wc -l )
+    count=$( ping -c ${countping} -W 1 $target | grep time= | wc -l )
 }
+
 
 # function to call Pi-hole API on a device and determine state
 #  updates
@@ -50,8 +61,28 @@ function pihole_apitest {
     checkstate=
 
     # pulls api status for parsing many times
-    checkprobe_raw=$(curl -s http://${testtarget}/admin/api.php?status)
+    # Identify if polling local instance or remote and use appropriate key
+    if [ "$testtarget" == "127.0.0.1" ]; then
+        APIkey=$localAPIkey
+    else
+        APIkey=$targetAPIkey
+    fi
+
+    # if no API key provided, assume one not required. This will most likely fail in recent pihole versions
+    if [ ! -z "$APIkey" ] ; then
+        checkprobe_raw=$(curl -s http://${testtarget}/admin/api.php?status\&auth=${localAPIkey})
+    else
+        checkprobe_raw=$(curl -s http://${testtarget}/admin/api.php?status)
+    fi
+
+    #debug print status string
     if [ ! -z "$piholeha_debug" ] ; then echo "${checkprobe_raw}" ; fi
+
+    # check to see got values, if '[]' assume auth key incorrect
+    if [ "$checkprobe_raw" == "[]" ] ; then
+        checkvalue=INVALID
+        return
+    fi
 
     # check to see if blocking is enabled or disabled
     checkprobe_status=$(jq -r '.status' <<< "$checkprobe_raw")
@@ -63,7 +94,8 @@ function pihole_apitest {
             if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} status disabled" ; fi 
             checkstate="disabled";;
         *)
-            if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} status unknown - ${checkprobe_status}" ; fi ;;
+            if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} status unknown - ${checkprobe_status}" ; fi
+            checkstate="BAD" ;;
     esac
 
     # check FTL status
@@ -72,7 +104,7 @@ function pihole_apitest {
         true)
             if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} FTL not functioning" ; fi 
             # some example calls I have seen it disabled as FTL not running. This is to catch those cases though seems deprecated API response now
-            if [ "$checkstate" == "disabled" ] ; then checkstate= ; fi 
+            if [ "$checkstate" == "disabled" ] ; then checkstate="BAD" ; fi 
             ;;
         *)
             if [ ! -z "$piholeha_debug" ] ; then echo "Pi-hole ${testtarget} FTL running ${partnerprobe_ftl}" ; fi ;;
@@ -82,15 +114,16 @@ function pihole_apitest {
     checkvalue=$(echo $checkstate)
 }
 
+
 # run selftest (this is on the Pi-hole instance that will take over in case the main one is offline/in error state)
 #  updates
 #     - %selfcheck% sanitised for nul compare
 function selftest {
-    #selfprobe1=$(curl -s http://127.0.0.1/admin/api.php?status | grep "enabled")
     testtarget=127.0.0.1
     pihole_apitest
     selfcheck=$(echo $checkvalue)
 }
+
 
 # check for partner active state
 #  relies on
@@ -98,11 +131,11 @@ function selftest {
 #  updates
 #     - %partnercheck% sanitised for nul compare
 function partneractivetest {
-    #partnercheckstate=$(curl -s http://${target}/admin/api.php?status | grep "status":"enabled")
     testtarget=$target
     pihole_apitest
     partnercheck=$(echo $checkvalue)
 }
+
 
 # different methods of sending notification
 function sendnotification {
@@ -119,6 +152,7 @@ function sendnotification_ifttt {
     curl -s --retry 5 https://maker.ifttt.com/trigger/$ifttt_trigger/with/key/$ifttt_token?state=$notificationmessage
 }
 
+
 # create file to flag DHCP has been activated
 function flag_dhcpon {
     echo ""
@@ -127,6 +161,7 @@ function flag_dhcpon {
     echo "...Done!"
 }
 
+
 # remove file to flag DHCP has been deactivated
 function flag_dhcpoff {
     echo ""
@@ -134,6 +169,7 @@ function flag_dhcpoff {
     rm -f ${dir}/dhcp.on
     echo "...Done!"
 }
+
 
 # Enable DHCP on local PiHole instance
 function dhcp_enable {
@@ -147,16 +183,21 @@ function dhcp_enable {
     # enable DHCP on local standby instance 
     echo ""
     echo "Enable DHCP on local Pi-hole instance..."
-    $pihole_app -a enabledhcp $piholedhcpparam
+    if [ ! -z "$piholeha_debug" ] ; then echo "executing ${pihole_app} -a enabledhcp ${piholedhcpparam}" ; fi
+    sudo $pihole_app -a enabledhcp ${piholedhcpparam}
     echo "...Done!"
 }
+
+
 # Disable DHCP on local PiHole instance
 function dhcp_disable {
     echo ""
     echo "Disabling DHCP on local Pi-hole instance..."
-    $pihole_app -a disabledhcp
+    if [ ! -z "$piholeha_debug" ] ; then echo "executing ${pihole_app} -a disabledhcp ${piholedhcpparam}" ; fi
+    sudo $pihole_app -a disabledhcp
     echo "...Done!"   
 }
+
 
 # copy DNSmasq configuration from backup location to live configuration
 function dhcp_copyconf {
@@ -168,6 +209,7 @@ function dhcp_copyconf {
     #copy existing leases
     cp ${dir}/pihole/dhcp.leases /etc/pihole/
 }
+
 
 # import DNSmasq configuration from partner PiHole instance
 function dhcp_backupconf {
@@ -191,8 +233,8 @@ function dhcp_backupconf {
     fi
 }
 
+
 # This parses configuration from DNSMASQ to compile values required to enable DHCP on pihole CLI
-#    currently unimplemented/incomplete
 function dhcp_parseconf {
     # read line from dnsmasq from file for the domain name
     dhcpdomain_raw=$(cat ${dir}/dnsmasq/02-pihole-dhcp.conf | grep domain=)
@@ -219,8 +261,7 @@ function dhcp_parseconf {
     dhcpscope_max=${dhcpscope_array2[1]}
 
     # build parameter to pass to PiHole to activate DHCP
-    piholedhcpparam="'${dhcpscope_min}' '${dhcpscope_max}' '${dhcprouter}' '${dhcp_lifetime}' '${dhcpdomain}'"
-
+    piholedhcpparam="${dhcpscope_min} ${dhcpscope_max} ${dhcprouter} ${dhcp_lifetime} ${dhcpdomain}"
     # debug output
     if [ ! -z "$piholeha_debug" ]
     then
@@ -235,6 +276,36 @@ function dhcp_parseconf {
     fi
 }
 
+
+# this function is to validate configuration file
+function ConfigFileCheck {
+
+    # ---------------------------
+    # check for valid ping counts
+    #ensure we have a non-zero ping count
+    if [ ! -z "$countping" ]
+    then
+        echo no valid number of pings to send. defaulting to 3
+        countping = 3
+    fi
+    
+    #ensure we have a non-zero number of pings expected
+    if [ ! -z "$expectping" ]
+    then
+        echo no valid number of expected pings. defaulting to ${countping}
+        countping = $countping
+    fi
+    
+    # ensure to expect same or less responses than we requested
+    if [ $countping -lt $expectping ] 
+    then
+        echo expectping is invalid/larger than countpint. Resetting to same
+        expectping = $countping
+    fi
+
+}
+
+
 # if configuration file doesn't exist, create a template for users
 function BuildDefaultConfig {
     cat << EOF > $configfile
@@ -245,19 +316,31 @@ function BuildDefaultConfig {
 sampleconfig=true
 
 # target IP or DNS of 'primary' Pi-hole, & friendly name of monitored Pi-hole
+#   target is ip/DNS of 'primary' instance
+#   targetname is friendly name of device shown in logs/output
 target=CHANGEME.local
 targetname=PiHole
 
-# how many pings to test against target (3 should be sufficent)
+# API keys for local and remote PiHole instances. used for health/status checks
+# Please note the script gracefully handles empty strings and will not attempt to auth if no key provided
+#   however modern versions of Pihole are now enforcing API auth so status polling will likely fail
+targetAPIkey=CHANGEME
+localAPIkey=CHANGEME
+
+# how many pings to test against target. 3 should be ample.
+# pings to send
 countping=3
+# minimum expected to consider connection 'good'. In 99% of networks, this should be the same as above
+expectping=3
 
 # User to connect to target Pi-hole as. Same requirements as Gravity-Sync requirement so same user is ideal.
 #  - SSH key authentication to be used
 #  - Configured as paswordless sudo
 syncuser=pi
 
-# HealthCheck.io Integration
-#   URI/UUID to enable, blank disables
+# Simple GET request for to confirm successful run of script
+#   URI to enable, blank disables
+# Compatible with HealthCheck.io or Uptime Kuma
 healthcheckuri=https://hc-ping.com/CHANGEME
 
 # User notifications

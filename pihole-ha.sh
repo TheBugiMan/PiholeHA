@@ -15,7 +15,7 @@
 dhcp_lifetime=1
 
 # Location of pihole executable
-#  specified as originally hacing issues executing pihole commands like 'restart'
+#  specified as originally hacking issues executing pihole commands like 'restart'
 #  could likely be improved but for time being it works!
 pihole_app=/usr/local/bin/pihole
 
@@ -41,7 +41,7 @@ servername=$(hostname)
 piholeha_debug=
 
 # set debug mode if requested
-if [ "$1" = "--debug" ] ; then
+if [ "$1" = "--debug" ] || [ "$2" = "--debug" ] ; then
     piholeha_debug=true
 fi
 
@@ -53,14 +53,8 @@ if [[ ! -d "$dir" ]]; then dir="$PWD"; fi
 . "$dir/pihole-ha-func.sh"
 
 # capture request for help/info
-if [ "$1" == "--help" ] ; then
+if [ "$1" == "--help" ] || [ "$1" == "-h" ] || [ "$1" == "/?" ] ; then
     helpoptions 
-fi
-if [ "$1" == "-h" ] ; then 
-    helpoptions
-fi
-if [ "$1" == "/?" ] ; then
-    helpoptions
 fi
 
 # checks if config file exists and if not creates a 'template'
@@ -85,6 +79,9 @@ then
     exit 1
 fi
 
+# perform config file sanity checks
+ConfigFileCheck
+
 #heading
 echo ""
 echo "======================================"
@@ -98,55 +95,113 @@ echo "--------------------------------------"
 echo ""
 echo "Performing self-test to confirm health..."
 selftest
-if [ ! -z "$piholeha_debug" ] ; then echo "${selfprobe1}" ; fi
+if [ ! -z "$piholeha_debug" ] ; then echo "Check Result=${selfcheck}" ; fi
 echo "...Done!"
 
-if [ -z "$selfcheck" ]
-then
-    if [ -e ${dir}/FTL.err ]
-    then
-        echo "...FTL error file present. Exiting!"
-        exit_success
-    else 
-        echo "...Local FTL in error state."
-        echo ""
-        echo "Running additional check ..."
-        sleep 2
-        selftest
-        if [ -z "$selfcheck" ]
+case "$selfcheck" in
+    # unable to validate state
+    "INVALID") 
+        if [ -e ${dir}/localAPI.err ]
         then
-            echo "...FTL still in error mode."
-            echo ""
-            echo "Creating lock file for local error state..."
-            touch ${dir}/FTL.err
-            echo ""
-            
-            # send notification
-            notificationmessage="Internet redundancy failure for Pi-hole"
-            sendnotification
+            echo "...Local API error file present. Exiting!"
             exit_success
-        else
+        else 
+            echo "...Local API in error state."
             echo ""
-            echo "Second check. FTL up and running."
+            echo "Running additional check ..."
+            sleep 2
+            selftest
+            
+            # while not technically accuate, for simplicity even if it isn't the same error on the second test it will flag as the first error
+            if [ -z "$selfcheck" ] || [ "$selfcheck"=="INVALID" ]
+            then
+                echo "...local API still in error mode."
+                echo ""
+                echo "Creating lock file for local error state..."
+                touch ${dir}/localAPI.err
+                echo ""
+                
+                # send notification
+                notificationmessage="Internet redundancy failure for Pi-hole (standby API)"
+                sendnotification
+                exit_success
+            else
+                echo ""
+                echo "Second check. Local API up and running."
+            fi
         fi
-    fi
-else
-    echo "...Local FTL up and running!"
-    echo ""
-    if [ -e ${dir}/FTL.err ]
-    then
-        echo "Clearing local error lock file..."
-        rm -f ${dir}/FTL.err
-        echo "...Done!"
-        
-        # send notification
-        notificationmessage='Internet redundancy resolved for Pi-hole'
-        sendnotification
-    else
-        # if in debug, explicit notification
-        if [ ! -z "$piholeha_debug" ] ; then echo "FTL flag file doesn't exist. No action performed." ; fi
-    fi
-fi
+
+        ;;
+    # in error state
+    "BAD") 
+        if [ -e ${dir}/FTL.err ]
+        then
+            echo "...FTL error file present. Exiting!"
+            exit_success
+        else 
+            echo "...Local FTL in error state."
+            echo ""
+            echo "Running additional check ..."
+            sleep 2
+            selftest
+            # while not technically accuate, for simplicity even if it isn't the same error on the second test it will flag as the first error
+            if [ -z "$selfcheck" ] || [ "$selfcheck"=="INVALID" ]
+            then
+                echo "...FTL still in error mode."
+                echo ""
+                echo "Creating lock file for local error state..."
+                touch ${dir}/FTL.err
+                echo ""
+                
+                # send notification
+                notificationmessage="Internet redundancy failure for Pi-hole (standby FTL)"
+                sendnotification
+                exit_success
+            else
+                echo ""
+                echo "Second check. FTL up and running."
+            fi
+        fi
+        ;;
+    # functioning as expected
+    #  this should in theory only see "disabled" or "enabled". Either option indicate serving DNS (and in theory DHCP)
+    *)
+        localnotificationcheck=
+
+        # clear previous error if FTL
+        if [ -e ${dir}/FTL.err ]
+        then
+            echo "Clearing local error lock file (FTL)..."
+            rm -f ${dir}/FTL.err
+            echo "...Done!"
+            localnotificationcheck=true
+        else
+            # if in debug, explicit notification
+            if [ ! -z "$piholeha_debug" ] ; then echo "Local FTL flag file doesn't exist. No action performed." ; fi
+        fi
+
+        # clear previous error if API
+        if [ -e ${dir}/localAPI.err ]
+        then
+            echo "Clearing local error lock file (API)..."
+            rm -f ${dir}/localAPI.err
+            echo "...Done!"
+            localnotificationcheck=true
+        else
+            # if in debug, explicit notification
+            if [ ! -z "$piholeha_debug" ] ; then echo "Local API flag file doesn't exist. No action performed." ; fi
+        fi
+
+        # if either or both errors cleared, send a notification
+        if [ ! -z $localnotificationcheck ]
+        then
+            # send notification
+            notificationmessage='Internet redundancy resolved for Pi-hole'
+            sendnotification
+        fi
+        ;;
+esac
+
 # -------------------------------------------------------------
 
 
@@ -155,7 +210,7 @@ fi
 echo ""
 echo "Performing ping test to remote Pihole instance at ${targetname}..."
 partnerping
-if [ ! -z "$piholeha_debug" ] ; then echo "${count}" ; fi
+if [ ! -z "$piholeha_debug" ] ; then echo "Check Result=${count}" ; fi
 echo "...Done!"
 
 # detect if number of returned pings are less than what was requested
@@ -169,28 +224,45 @@ then
     else
         echo "${targetname} is not reliable! $count of $countping pings replied"
     fi
-    
-    # determine if already in failover state or if need to set flag and fail over
-    if [ -e ${dir}/dhcp.on ]
-    then
-        echo ""
-        echo "DHCP server already enabled. No changes or notifications performed."
-        exit_success
-    else
-        # activate DHCP server
-        dhcp_enable
-        
-        # create flag file to inform subsequent runs already failed over
-        flag_dhcpon
 
-        # send notification
-        notificationmessage='Internet failover for Pi-hole has started'
-        sendnotification
+    echo ""
+    echo "Running additional check ..."
+    sleep 2
+    partnerping
+    if [ ! -z "$piholeha_debug" ] ; then echo "Check Result=${count}" ; fi
+    echo "...Done!"
+
+    if [ $count -lt $expectping ] 
+    then
+
+        echo "${targetname} is not reliable! $count of $countping pings replied"
+
+        # determine if already in failover state or if need to set flag and fail over
+        if [ -e ${dir}/dhcp.on ]
+        then
+            echo ""
+            echo "DHCP server already enabled. No changes or notifications performed."
+            exit_success
+        else
+            # activate DHCP server
+            dhcp_enable
+            
+            # create flag file to inform subsequent runs already failed over
+            flag_dhcpon
+
+            # send notification
+            notificationmessage='Internet failover (primary connectivity ${count} of ${countping})'
+            sendnotification
+            exit_success
+        fi
+    else
+        # if in debug mode explicitly notify
+        if [ ! -z "$piholeha_debug" ] ; then echo "${targetname} is responding to pings" ; fi
+        # we do not clear any error states here until passes application tests
     fi
 else
     # if in debug mode explicitly notify
     if [ ! -z "$piholeha_debug" ] ; then echo "${targetname} is responding to pings" ; fi
-
     # we do not clear any error states here until passes application tests
 fi
 # -------------------------------------------------------------
@@ -202,62 +274,100 @@ fi
 echo ""
 echo "Performing application tests to remote Pi-hole instance at ${targetname}..."
 partneractivetest
-if [ ! -z "$piholeha_debug" ] ; then echo "${partnerprobe1}" ; fi
+if [ ! -z "$piholeha_debug" ] ; then echo "Check Result=${partnercheck}" ; fi
 echo "...Done!"
 
 # detect if check failed
-if [ -z "$partnercheck" ]
-then
-    # if in debug mode explicitly notify
-    if [ ! -z "$piholeha_debug" ] ; then echo "${targetname} is NOT operational" ; fi
+case "$partnercheck" in
+    # unable to validate state
+    "INVALID") 
+        # if in debug mode explicitly notify
+        if [ ! -z "$piholeha_debug" ] ; then echo "${targetname} status is unknown (API error)" ; fi
+        echo "Unable to determine state of primary instance due to possible invalid API key"
 
-    if [ -e ${dir}/dhcp.on ]
-    then
-        echo "DHCP server already enabled. No changes or notifications performed."
-        exit_success
-    else
-        echo "${targetname} is not in a good state!"
+        if [ -e ${dir}/primaryAPI.err ]
+        then
+            if [ ! -z "$piholeha_debug" ] ; then echo "Remote API error file flag already set, no changes." ; fi
+            exit_success
+        else
+            echo ""
+            echo "Generating lock file for remote API state"
+            touch ${dir}/primaryAPI.err
+            echo "...Done!"
 
-        # create flag file to inform subsequent runs already failed over
-        flag_dhcpon
+            # send notification
+            notificationmessage='Internet redundancy for Pi-hole (primary API)'
+            sendnotification
 
-        # activate DHCP server
-        dhcp_enable
+            exit_success
+        fi       
+        ;;
+    # returning bad or no state
+    "BAD")
+        # if in debug mode explicitly notify
+        if [ ! -z "$piholeha_debug" ] ; then echo "${targetname} is NOT operational" ; fi
 
-        # send notification
-        notificationmessage='Internet failover for Pi-hole has started'
-        sendnotification
-    fi
+        if [ -e ${dir}/dhcp.on ]
+        then
+            echo "DHCP server already enabled. No changes or notifications performed."
+            exit_success
+        else
+            echo "${targetname} is not in a good state!"
 
-else
-    # if in debug mode explicitly notify
-    if [ ! -z "$piholeha_debug" ] ; then echo "${targetname} is operational" ; fi
+            # create flag file to inform subsequent runs already failed over
+            flag_dhcpon
 
-    if [ -e ${dir}/dhcp.on ]
-    then
-        echo "${targetname} is Alive!"
+            # activate DHCP server
+            dhcp_enable
 
-        # deactivate DHCP server
-        dhcp_disable      
+            # send notification
+            notificationmessage='Internet failover for Pi-hole has started'
+            sendnotification
+        fi
+        ;;
+    # functioning as expected
+    #  this should in theory only see "disabled" or "enabled". Either option indicate serving DNS (and in theory DHCP)
+    *) 
+        # if in debug mode explicitly notify
+        if [ ! -z "$piholeha_debug" ] ; then echo "${targetname} is operational" ; fi
 
-        # clear dhcp active flag
-        flag_dhcpoff
+        # clear APIerror flag if set
+        if [ -e ${dir}/primaryAPI.err ]
+        then 
+            echo "Clearing error lock file (primary API)..."
+            rm -f ${dir}/primaryAPI.err
+            echo "...Done!"
 
-        # send notification
-        notificationmessage='Internet failover for Pi-hole has finished'
-        sendnotification
-    else
-        # if in debug, explicit notification
-        if [ ! -z "$piholeha_debug" ] ; then echo "DHCP flag file doesn't exist. No action performed." ; fi
-    fi
+            # send notification
+            notificationmessage='Internet redundancy for Pi-hole resolved (primary API)'
+            sendnotification
+        fi
 
-    echo ""
-    echo "Sync from primary Pi-hole instance ${targetname}..."
-    # pull current leases off primary pihole
-    dhcp_backupconf
-    echo "...done!"
+        if [ -e ${dir}/dhcp.on ]
+        then
+            echo "${targetname} is Alive!"
 
-fi
+            # deactivate DHCP server
+            dhcp_disable      
+
+            # clear dhcp active flag
+            flag_dhcpoff
+
+            # send notification
+            notificationmessage='Internet for Pi-hole has returned to normal'
+            sendnotification
+        else
+            # if in debug, explicit notification
+            if [ ! -z "$piholeha_debug" ] ; then echo "DHCP flag file doesn't exist. No action performed." ; fi
+        fi
+
+        echo ""
+        echo "Sync from primary Pi-hole instance ${targetname}..."
+        # pull current leases off primary pihole
+        dhcp_backupconf
+        echo "...Done!"
+        ;;
+esac
 # -------------------------------------------------------------
 
 # if script didn't bomb out, exit nicely and poll healthcheck.io instance to confirm successful run
