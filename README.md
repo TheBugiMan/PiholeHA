@@ -37,3 +37,5 @@ partner/primary Pi-hole server.
 4) Check response back from push notification to see if successful
     * Telegram JSON response includes "ok":true or "ok":false
 5) Automate addition of two DNS servers on primary pi-hole instance
+6) set aggressiveness of failover (eg. none, hard down, primary unstable/unknown)
+7) test-only cmd option to check health of primary and standby pihole instances
